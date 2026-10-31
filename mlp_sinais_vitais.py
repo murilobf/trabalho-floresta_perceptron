@@ -10,7 +10,6 @@ CLASSES = ("crítico", "instável", "potencialmente estável", "estável")
 
 
 def ler_dados(caminho, colunas):
-    """Lê números separados por vírgulas, sem cabeçalho."""
     permitidas = (colunas,) if isinstance(colunas, int) else colunas
     dados = np.loadtxt(caminho, delimiter=",", encoding="utf-8-sig", ndmin=2)
     if dados.size == 0:
@@ -27,27 +26,28 @@ def ler_dados(caminho, colunas):
 
 
 def entradas_para_previsao(dados):
-    # No arquivo de 7 colunas, ignora ID, pressões e gravidade conhecida.
     return dados[:, 3:6] if dados.shape[1] == 7 else dados[:, 1:4]
 
 
 def separar_dados(dados):
-    """Reserva aproximadamente 20% de cada classe para teste."""
     sorteio = np.random.default_rng(SEMENTE)
     treino, teste = [], []
+
     for classe in range(1, 5):
         grupo = dados[dados[:, 7] == classe].copy()
+
         if len(grupo) < 2:
             raise ValueError("São necessários pelo menos dois exemplos por classe.")
+        
         sorteio.shuffle(grupo)
         quantidade = max(1, round(len(grupo) * 0.2))
         teste.append(grupo[:quantidade])
         treino.append(grupo[quantidade:])
+
     return np.concatenate(treino), np.concatenate(teste)
 
 
 def calcular_escala(treino):
-    """Calcula a escala somente no treino, evitando vazamento de dados."""
     entradas = treino[:, 3:6]
     medias = entradas.mean(axis=0)
     desvios = entradas.std(axis=0)
@@ -75,13 +75,14 @@ class MLP:
         saida = oculta @ self.w2 + self.b2
 
         if self.classificacao:
-
             exponenciais = np.exp(saida - saida.max(axis=-1, keepdims=True))
             saida = exponenciais / exponenciais.sum(axis=-1, keepdims=True)
+
         return oculta, saida
 
     def treinar(self, entradas, alvos):
         sorteio = np.random.default_rng(SEMENTE)
+
         for _ in range(EPOCAS):
             for indice in sorteio.permutation(len(entradas)):
                 x, alvo = entradas[indice], alvos[indice]
@@ -90,6 +91,7 @@ class MLP:
                 if self.classificacao:
                     erro_saida = saida.copy()
                     erro_saida[int(alvo)] -= 1.0
+
                 else:
                     erro_saida = saida - alvo
 
@@ -102,8 +104,10 @@ class MLP:
 
     def prever(self, entradas):
         _, saida = self.propagar(entradas)
+
         if self.classificacao:
             return np.argmax(saida, axis=-1) + 1
+        
         return saida[..., 0] * 100.0  # volta pra escala original da gravidade
 
 
@@ -116,6 +120,7 @@ def avaliar(dados, medias, desvios, regressao, classificacao):
     rmse = np.sqrt(np.mean((gravidades - dados[:, 6]) ** 2))
     acuracia = np.mean(previstas == reais)
     matriz = np.zeros((4, 4), dtype=int)
+
     for real, prevista in zip(reais, previstas):
         matriz[real - 1, prevista - 1] += 1
 
@@ -125,6 +130,7 @@ def avaliar(dados, medias, desvios, regressao, classificacao):
     print(matriz)
     print("Classe                         Precisão  Recall     F1   Suporte")
     f1_total = 0.0
+
     for k in range(4):
         vp = matriz[k, k]
         total_previstas = matriz[:, k].sum()
@@ -135,6 +141,7 @@ def avaliar(dados, medias, desvios, regressao, classificacao):
         f1_total += f1
         print(f"{k + 1} {CLASSES[k]:28} {precisao:.3f}    {recall:.3f}  "
               f"{f1:.3f}  {total_reais:6d}")
+        
     print(f"F1 macro: {f1_total / 4:.4f}")
 
 
