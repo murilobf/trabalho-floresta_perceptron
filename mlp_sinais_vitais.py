@@ -1,11 +1,12 @@
 import argparse
+from pathlib import Path
 import numpy as np
 
 
 SEMENTE = 10
 NEURONIOS = 8
 EPOCAS = 3200
-TAXA = 0.01
+TAXA = 0.1
 CLASSES = ("crítico", "instável", "potencialmente estável", "estável")
 
 
@@ -38,7 +39,7 @@ def separar_dados(dados):
 
         if len(grupo) < 2:
             raise ValueError("São necessários pelo menos dois exemplos por classe.")
-        
+
         sorteio.shuffle(grupo)
         quantidade = max(1, round(len(grupo) * 0.2))
         teste.append(grupo[:quantidade])
@@ -82,8 +83,9 @@ class MLP:
 
     def treinar(self, entradas, alvos):
         sorteio = np.random.default_rng(SEMENTE)
+        historico = []
 
-        for _ in range(EPOCAS):
+        for epoca in range(1, EPOCAS + 1):
             for indice in sorteio.permutation(len(entradas)):
                 x, alvo = entradas[indice], alvos[indice]
                 oculta, saida = self.propagar(x)
@@ -102,13 +104,28 @@ class MLP:
                 self.w1 -= TAXA * np.outer(x, erro_oculta)
                 self.b1 -= TAXA * erro_oculta
 
+            if self.classificacao:
+                oculta = np.tanh(entradas @ self.w1 + self.b1)
+                pontuacoes = oculta @ self.w2 + self.b2
+                pontuacoes -= pontuacoes.max(axis=1, keepdims=True)
+                log_soma = np.log(np.exp(pontuacoes).sum(axis=1))
+                corretas = pontuacoes[np.arange(len(alvos)), alvos]
+                perda = np.mean(log_soma - corretas)
+                historico.append((epoca, perda))
+
+            if epoca == 1 or epoca % 100 == 0 or epoca == EPOCAS:
+                nome = "Classificação" if self.classificacao else "Regressão"
+                print(f"{nome}: época {epoca}/{EPOCAS}", flush=True)
+
+        return historico
+
     def prever(self, entradas):
         _, saida = self.propagar(entradas)
 
         if self.classificacao:
             return np.argmax(saida, axis=-1) + 1
-        
-        return saida[..., 0] * 100.0  # volta pra escala original da gravidade
+
+        return saida[..., 0] * 100.0
 
 
 def avaliar(dados, medias, desvios, regressao, classificacao):
@@ -141,7 +158,7 @@ def avaliar(dados, medias, desvios, regressao, classificacao):
         f1_total += f1
         print(f"{k + 1} {CLASSES[k]:28} {precisao:.3f}    {recall:.3f}  "
               f"{f1:.3f}  {total_reais:6d}")
-        
+
     print(f"F1 macro: {f1_total / 4:.4f}")
 
 
@@ -150,10 +167,14 @@ def main():
     parser.add_argument("treino", help="Arquivo com as oito colunas e a classe")
     parser.add_argument("--prever", help="Arquivo sem label de 7 colunas ou teste cego de 4 colunas")
     parser.add_argument("--saida", default="previsoes_mlp.csv")
+    parser.add_argument("--pasta-resultados", default="resultados",
+                        help="Pasta dos CSVs utilizados pelo script de gráficos")
     args = parser.parse_args()
 
     dados = ler_dados(args.treino, 8)
     novos = ler_dados(args.prever, (7, 4)) if args.prever else None
+    pasta = Path(args.pasta_resultados)
+    pasta.mkdir(parents=True, exist_ok=True)
     treino, teste = separar_dados(dados)
     medias, desvios = calcular_escala(treino)
     entradas = normalizar(treino[:, 3:6], medias, desvios)
@@ -163,12 +184,22 @@ def main():
     print(f"Treino: {len(treino)} | Teste: {len(teste)}", flush=True)
     print("Treinando as redes", flush=True)
     regressao.treinar(entradas, treino[:, 6] / 100.0)
-    classificacao.treinar(entradas, treino[:, 7].astype(int) - 1)
+    historico = classificacao.treinar(entradas, treino[:, 7].astype(int) - 1)
+    np.savetxt(pasta / "perda_classificacao.csv", historico, delimiter=",",
+               header="epoca,perda_classificacao", comments="", fmt=["%d", "%.12g"])
 
     print("\nResultados de treinamento")
     avaliar(treino, medias, desvios, regressao, classificacao)
     print("\nResultados de teste (exemplos não usados no treinamento)")
     avaliar(teste, medias, desvios, regressao, classificacao)
+
+    entradas_teste = normalizar(teste[:, 3:6], medias, desvios)
+    gravidades = np.column_stack((teste[:, 0], teste[:, 6],
+                                 regressao.prever(entradas_teste)))
+    np.savetxt(pasta / "gravidade_teste.csv", gravidades, delimiter=",",
+               header="id,gravidade_real,gravidade_prevista", comments="",
+               fmt=["%d", "%.12g", "%.12g"])
+    print(f"\nDados para gráficos salvos em {pasta}")
 
     if novos is not None:
         entradas = normalizar(entradas_para_previsao(novos), medias, desvios)
@@ -179,4 +210,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()  
+    main()
